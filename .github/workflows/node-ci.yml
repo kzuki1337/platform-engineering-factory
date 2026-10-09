@@ -1,0 +1,44 @@
+name: Reusable Node.js CI
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node.js version
+        type: string
+        required: false
+        default: "22"
+      working-directory:
+        description: Directory containing package.json and package-lock.json
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - name: Install locked dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: npm ci
+      - name: Lint
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run lint
+      - name: Test
+        working-directory: ${{ inputs.working-directory }}
+        run: npm test
+      - name: Build
+        working-directory: ${{ inputs.working-directory }}
+        run: npm run build
+      - name: Audit dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: npm audit --audit-level=high

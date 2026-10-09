@@ -1,0 +1,38 @@
+name: Reusable .NET CI
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        description: .NET SDK version
+        type: string
+        required: false
+        default: "10.0.x"
+      solution:
+        description: Path to solution or project file
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - name: Restore
+        env:
+          SOLUTION: ${{ inputs.solution }}
+        run: dotnet restore "$SOLUTION"
+      - name: Verify formatting
+        env:
+          SOLUTION: ${{ inputs.solution }}
+        run: dotnet format "$SOLUTION" --verify-no-changes --no-restore
+      - name: Test
+        env:
+          SOLUTION: ${{ inputs.solution }}
+        run: dotnet test "$SOLUTION" --no-restore --configuration Release

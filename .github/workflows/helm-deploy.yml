@@ -1,0 +1,96 @@
+name: Reusable Helm deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub Environment and deployment target name
+        type: string
+        required: true
+      runner-label:
+        description: Label assigned to the isolated deployment runner
+        type: string
+        required: true
+      aws-region:
+        description: AWS region containing the EKS cluster
+        type: string
+        required: true
+      cluster-name:
+        description: Existing EKS cluster name
+        type: string
+        required: true
+      release-name:
+        description: Helm release name
+        type: string
+        required: true
+      namespace:
+        description: Kubernetes namespace
+        type: string
+        required: true
+      chart-path:
+        description: Path to Helm chart
+        type: string
+        required: false
+        default: "."
+      values-file:
+        description: Reviewed values file for this environment
+        type: string
+        required: true
+      image:
+        description: OCI image repository (without tag or digest)
+        type: string
+        required: true
+      image-digest:
+        description: Immutable OCI digest, for example sha256:...
+        type: string
+        required: true
+      helm-version:
+        description: Helm CLI version
+        type: string
+        required: false
+        default: "3.16.3"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runner-label }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+      - name: Configure EKS access
+        env:
+          CLUSTER_NAME: ${{ inputs.cluster-name }}
+          AWS_REGION: ${{ inputs.aws-region }}
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ inputs.helm-version }}
+      - name: Deploy immutable image digest
+        env:
+          RELEASE_NAME: ${{ inputs.release-name }}
+          NAMESPACE: ${{ inputs.namespace }}
+          CHART_PATH: ${{ inputs.chart-path }}
+          VALUES_FILE: ${{ inputs.values-file }}
+          IMAGE: ${{ inputs.image }}
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+        run: |
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "image-digest must be a sha256 digest" >&2
+            exit 1
+          fi
+          helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" \
+            --namespace "$NAMESPACE" \
+            --create-namespace \
+            --values "$VALUES_FILE" \
+            --set-string image.repository="$IMAGE" \
+            --set-string image.digest="$IMAGE_DIGEST" \
+            --wait --atomic --timeout 5m

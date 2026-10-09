@@ -1,0 +1,36 @@
+name: Reusable Terraform validation
+
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: Terraform CLI version
+        type: string
+        required: false
+        default: "1.9.8"
+      working-directory:
+        description: Directory containing Terraform configuration
+        type: string
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+      - name: Initialize without backend access
+        run: terraform init -backend=false -input=false
+      - name: Validate
+        run: terraform validate -no-color

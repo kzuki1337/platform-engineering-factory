@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars and replace every placeholder with values for your AWS account.
+# This example intentionally uses non-existent VPC and subnet IDs and cannot be applied as-is.
+
+aws_region      = "us-east-1"
+cluster_name    = "example-platform-eks"
+cluster_version = "1.XX"
+
+vpc_id = "vpc-0123456789abcdef0"
+
+private_subnet_ids = [
+  "subnet-0123456789abcdef0",
+  "subnet-0123456789abcdef1",
+]
+
+tags = {
+  Environment = "example"
+  ManagedBy   = "terraform"
+  Owner       = "platform-engineering"
+  Project     = "eks-foundation-example"
+}

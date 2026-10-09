@@ -1,0 +1,22 @@
+name: Reusable dependency review
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-severity:
+        description: Highest advisory severity that fails the pull request
+        type: string
+        required: false
+        default: high
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail-on-severity }}

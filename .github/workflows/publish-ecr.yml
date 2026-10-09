@@ -1,0 +1,75 @@
+name: Reusable ECR image publish
+
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        description: AWS region containing the ECR repository
+        type: string
+        required: true
+      ecr-repository:
+        description: Existing ECR repository name
+        type: string
+        required: true
+      image-context:
+        description: Docker build context
+        type: string
+        required: false
+        default: "."
+      dockerfile:
+        description: Dockerfile path
+        type: string
+        required: false
+        default: "Dockerfile"
+    secrets:
+      aws-role-to-assume:
+        description: Short-lived AWS role ARN trusted for this repository/ref
+        required: true
+    outputs:
+      image:
+        description: ECR image repository URI
+        value: ${{ jobs.publish.outputs.image }}
+      digest:
+        description: Immutable OCI digest to promote
+        value: ${{ jobs.publish.outputs.digest }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws-role-to-assume }}
+          aws-region: ${{ inputs.aws-region }}
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Set image URI
+        id: image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ inputs.ecr-repository }}
+        run: echo "image=${REGISTRY}/${REPOSITORY}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and publish immutable commit tag
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.image-context }}
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: ${{ steps.image.outputs.image }}:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

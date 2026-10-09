@@ -1,0 +1,133 @@
+name: Publish and promote
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: YOUR-ORG/platform-cicd/.github/workflows/python-ci.yml@v1.0.0
+    with:
+      python-version: "3.12"
+      working-directory: .
+
+  publish:
+    needs: ci
+    permissions:
+      contents: read
+      id-token: write
+    uses: YOUR-ORG/platform-cicd/.github/workflows/publish-ecr.yml@v1.0.0
+    with:
+      aws-region: ${{ vars.AWS_REGION }}
+      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      image-context: .
+      dockerfile: Dockerfile
+    secrets:
+      aws-role-to-assume: ${{ secrets.AWS_PUBLISH_ROLE_ARN }}
+
+  scan:
+    needs: publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: YOUR-ORG/platform-cicd/.github/workflows/ecr-scan-gate.yml@v1.0.0
+    with:
+      aws-region: ${{ vars.AWS_REGION }}
+      ecr-repository: ${{ vars.ECR_REPOSITORY }}
+      image-digest: ${{ needs.publish.outputs.digest }}
+      fail-on-severity: high
+    secrets:
+      aws-role-to-assume: ${{ secrets.AWS_SCAN_ROLE_ARN }}
+
+  deploy-dev:
+    needs: [publish, scan]
+    uses: YOUR-ORG/platform-cicd/.github/workflows/helm-deploy.yml@v1.0.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: dev
+      runner-label: platform-aws-deploy
+      aws-region: ${{ vars.AWS_REGION }}
+      cluster-name: ${{ vars.DEV_EKS_CLUSTER_NAME }}
+      release-name: python-service
+      namespace: python-service
+      chart-path: helm/application
+      values-file: helm/application/values/values-dev.yaml
+      image: ${{ needs.publish.outputs.image }}
+      image-digest: ${{ needs.publish.outputs.digest }}
+
+  deploy-qa:
+    needs: [publish, scan, deploy-dev]
+    uses: YOUR-ORG/platform-cicd/.github/workflows/helm-deploy.yml@v1.0.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: qa
+      runner-label: platform-aws-deploy
+      aws-region: ${{ vars.AWS_REGION }}
+      cluster-name: ${{ vars.QA_EKS_CLUSTER_NAME }}
+      release-name: python-service
+      namespace: python-service
+      chart-path: helm/application
+      values-file: helm/application/values/values-qa.yaml
+      image: ${{ needs.publish.outputs.image }}
+      image-digest: ${{ needs.publish.outputs.digest }}
+
+  deploy-uat:
+    needs: [publish, scan, deploy-qa]
+    uses: YOUR-ORG/platform-cicd/.github/workflows/helm-deploy.yml@v1.0.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: uat
+      runner-label: platform-aws-deploy
+      aws-region: ${{ vars.AWS_REGION }}
+      cluster-name: ${{ vars.UAT_EKS_CLUSTER_NAME }}
+      release-name: python-service
+      namespace: python-service
+      chart-path: helm/application
+      values-file: helm/application/values/values-uat.yaml
+      image: ${{ needs.publish.outputs.image }}
+      image-digest: ${{ needs.publish.outputs.digest }}
+
+  deploy-stg:
+    needs: [publish, scan, deploy-uat]
+    uses: YOUR-ORG/platform-cicd/.github/workflows/helm-deploy.yml@v1.0.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: stg
+      runner-label: platform-aws-deploy
+      aws-region: ${{ vars.AWS_REGION }}
+      cluster-name: ${{ vars.STG_EKS_CLUSTER_NAME }}
+      release-name: python-service
+      namespace: python-service
+      chart-path: helm/application
+      values-file: helm/application/values/values-stg.yaml
+      image: ${{ needs.publish.outputs.image }}
+      image-digest: ${{ needs.publish.outputs.digest }}
+
+  deploy-prod:
+    needs: [publish, scan, deploy-stg]
+    uses: YOUR-ORG/platform-cicd/.github/workflows/helm-deploy.yml@v1.0.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: prod
+      runner-label: platform-aws-deploy
+      aws-region: ${{ vars.AWS_REGION }}
+      cluster-name: ${{ vars.PROD_EKS_CLUSTER_NAME }}
+      release-name: python-service
+      namespace: python-service
+      chart-path: helm/application
+      values-file: helm/application/values/values-prod.yaml
+      image: ${{ needs.publish.outputs.image }}
+      image-digest: ${{ needs.publish.outputs.digest }}

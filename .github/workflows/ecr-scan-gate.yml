@@ -1,0 +1,112 @@
+name: Reusable ECR vulnerability gate
+
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        description: AWS region containing the ECR repository
+        type: string
+        required: true
+      ecr-repository:
+        description: Existing ECR repository name
+        type: string
+        required: true
+      image-digest:
+        description: Immutable OCI digest to inspect
+        type: string
+        required: true
+      fail-on-severity:
+        description: Fail on critical or higher, or high or higher
+        type: string
+        required: false
+        default: high
+    secrets:
+      aws-role-to-assume:
+        description: Read-only ECR scan role ARN trusted for this repository/ref
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws-role-to-assume }}
+          aws-region: ${{ inputs.aws-region }}
+      - name: Wait for ECR scan and enforce severity threshold
+        env:
+          AWS_REGION: ${{ inputs.aws-region }}
+          REPOSITORY: ${{ inputs.ecr-repository }}
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+          FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+        run: |
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "image-digest must be a sha256 digest" >&2
+            exit 1
+          fi
+
+          if [[ "$FAIL_ON_SEVERITY" != "critical" && "$FAIL_ON_SEVERITY" != "high" ]]; then
+            echo "fail-on-severity must be critical or high" >&2
+            exit 1
+          fi
+
+          scan=""
+          scan_complete=false
+          for attempt in $(seq 1 60); do
+            if scan="$(aws ecr describe-image-scan-findings \
+              --region "$AWS_REGION" \
+              --repository-name "$REPOSITORY" \
+              --image-id "imageDigest=$IMAGE_DIGEST" \
+              --output json 2>&1)"; then
+              status="$(jq -r '.imageScanStatus.status // empty' <<< "$scan")"
+              case "$status" in
+                COMPLETE)
+                  scan_complete=true
+                  break
+                  ;;
+                IN_PROGRESS)
+                  sleep 10
+                  ;;
+                *)
+                  echo "ECR scan returned unexpected status: ${status:-missing}" >&2
+                  echo "$scan" >&2
+                  exit 1
+                  ;;
+              esac
+            else
+              case "$scan" in
+                *ScanNotFoundException*)
+                  sleep 10
+                  ;;
+                *)
+                  echo "Unable to retrieve ECR image scan findings" >&2
+                  echo "$scan" >&2
+                  exit 1
+                  ;;
+              esac
+            fi
+          done
+
+          if [[ "$scan_complete" != "true" ]]; then
+            echo "ECR image scan did not complete within the 10-minute wait window" >&2
+            exit 1
+          fi
+
+          critical="$(jq -r '.imageScanFindings.findingSeverityCounts.CRITICAL // 0' <<< "$scan")"
+          high="$(jq -r '.imageScanFindings.findingSeverityCounts.HIGH // 0' <<< "$scan")"
+          echo "ECR findings: critical=$critical high=$high"
+
+          if (( critical > 0 )); then
+            echo "Blocking image promotion: critical vulnerabilities found" >&2
+            exit 1
+          fi
+          if [[ "$FAIL_ON_SEVERITY" == "high" ]] && (( high > 0 )); then
+            echo "Blocking image promotion: high vulnerabilities found" >&2
+            exit 1
+          fi
